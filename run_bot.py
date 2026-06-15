@@ -39,12 +39,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 _bot_lock = threading.Lock()
 _bot_running = False
+_control = None  # engine.RunControl du run en cours (ajustable en direct)
 
 
-def _run_bot_thread(config_path, total, headless):
+def _run_bot_thread(config_path, control):
     global _bot_running
     try:
-        engine.run(config_path, total, headless=headless)
+        engine.run(config_path, control.total, control=control)
     finally:
         _bot_running = False
 
@@ -74,34 +75,73 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         else:
             super().do_GET()
 
-    def do_POST(self):
-        global _bot_running
-        if self.path == "/launch":
-            length = int(self.headers.get("Content-Length", 0))
-            data = json.loads(self.rfile.read(length) or b"{}")
+    def _send_json(self, status, payload):
+        body = json.dumps(payload).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
+    def _read_body(self):
+        length = int(self.headers.get("Content-Length", 0))
+        return json.loads(self.rfile.read(length) or b"{}")
+
+    def do_POST(self):
+        global _bot_running, _control
+        if self.path == "/launch":
+            data = self._read_body()
             with _bot_lock:
                 if _bot_running:
-                    body = json.dumps({"ok": False, "error": "Bot déjà en cours"}).encode()
-                    self.send_response(409)
-                else:
-                    total = int(data.get("total", self._default_total))
-                    headless = bool(data.get("headless", self._default_headless))
-                    config_path = data.get("config_path", self._config_path)
-                    _bot_running = True
-                    t = threading.Thread(
-                        target=_run_bot_thread,
-                        args=(config_path, total, headless),
-                        daemon=True,
-                    )
-                    t.start()
-                    body = json.dumps({"ok": True, "total": total, "headless": headless}).encode()
-                    self.send_response(200)
+                    self._send_json(409, {"ok": False, "error": "Bot déjà en cours"})
+                    return
+                total = int(data.get("total", self._default_total))
+                headless = bool(data.get("headless", self._default_headless))
+                speed = float(data.get("speed", 1.0))
+                config_path = data.get("config_path", self._config_path)
+                _control = engine.RunControl(total, headless, speed=speed)
+                _bot_running = True
+                t = threading.Thread(
+                    target=_run_bot_thread,
+                    args=(config_path, _control),
+                    daemon=True,
+                )
+                t.start()
+            self._send_json(200, {"ok": True, "total": total, "headless": headless})
 
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+        elif self.path == "/stop":
+            # Arrêt propre : le moteur s'arrête après la réponse en cours.
+            if _bot_running and _control is not None:
+                _control.stop = True
+                self._send_json(200, {"ok": True})
+            else:
+                self._send_json(409, {"ok": False, "error": "Aucun bot en cours"})
+
+        elif self.path == "/update":
+            # Ajuste EN DIRECT le nombre de réponses et/ou le mode navigateur.
+            data = self._read_body()
+            if not _bot_running or _control is None:
+                self._send_json(409, {"ok": False, "error": "Aucun bot en cours"})
+                return
+            if "total" in data:
+                try:
+                    _control.total = max(1, int(data["total"]))
+                except (TypeError, ValueError):
+                    pass
+            if "headless" in data:
+                _control.headless = bool(data["headless"])
+            if "speed" in data:
+                try:
+                    _control.speed = max(0.1, min(8.0, float(data["speed"])))
+                except (TypeError, ValueError):
+                    pass
+            self._send_json(200, {
+                "ok": True,
+                "total": _control.total,
+                "headless": _control.headless,
+                "speed": _control.speed,
+            })
+
         else:
             self.send_response(404)
             self.end_headers()

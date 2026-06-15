@@ -51,14 +51,38 @@
   .toggle input:checked + .slider:before { transform: translateX(22px); background: #fff; }
   .toggle-label { font-size: 13px; color: #e6edf3; min-width: 90px; }
 
-  /* Bouton lancer */
+  /* Boutons lancer / arrêter */
+  .actions { margin-left: auto; display: flex; gap: 10px; }
   .btn-launch {
-    margin-left: auto; padding: 0 24px; height: 40px; border-radius: 8px;
+    padding: 0 24px; height: 40px; border-radius: 8px;
     border: none; background: #238636; color: #fff; font-size: 14px; font-weight: 600;
     cursor: pointer; transition: background .15s; white-space: nowrap;
   }
   .btn-launch:hover:not(:disabled) { background: #2ea043; }
   .btn-launch:disabled { background: #21262d; color: #6e7681; cursor: not-allowed; }
+  .btn-stop {
+    padding: 0 24px; height: 40px; border-radius: 8px;
+    border: 1px solid #f85149; background: transparent; color: #f85149;
+    font-size: 14px; font-weight: 600; cursor: pointer; transition: .15s; white-space: nowrap;
+  }
+  .btn-stop:hover:not(:disabled) { background: #f8514922; }
+  .btn-stop:disabled { border-color: #30363d; color: #6e7681; cursor: not-allowed; }
+
+  /* Vitesse */
+  .speed-row { display: flex; align-items: center; gap: 12px; }
+  .speed-row input[type=range] { width: 180px; accent-color: #1f6feb; }
+  .speed-val { font-size: 14px; font-weight: 700; min-width: 46px; }
+  .speed-val.turbo { color: #d29922; }
+  .speed-val.danger { color: #f85149; }
+
+  /* Avertissement santé Sphinx */
+  .warn {
+    display: none; margin-top: 14px; padding: 10px 14px; border-radius: 8px;
+    font-size: 13px; line-height: 1.5;
+    background: #d2992222; border: 1px solid #d29922; color: #f0c674;
+  }
+  .warn.danger { background: #f8514922; border-color: #f85149; color: #ff9a93; }
+  .warn.show { display: block; }
 
   /* Barre de progression */
   .barwrap { background: #21262d; border-radius: 8px; height: 28px; overflow: hidden; position: relative; }
@@ -118,8 +142,21 @@
         </div>
       </div>
 
-      <button class="btn-launch" id="btn-launch" onclick="launch()">▶ Lancer</button>
+      <div class="ctrl-group">
+        <label>Vitesse</label>
+        <div class="speed-row">
+          <input type="range" id="rng-speed" min="0.5" max="8" step="0.5" value="1">
+          <span class="speed-val" id="speed-val">×1</span>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="btn-launch" id="btn-launch" onclick="launch()">▶ Lancer</button>
+        <button class="btn-stop" id="btn-stop" onclick="stopBot()" disabled>■ Arrêter</button>
+      </div>
     </div>
+
+    <div class="warn" id="warn"></div>
   </div>
 
   <!-- Progression -->
@@ -146,6 +183,8 @@
 
 <script>
 let configPath = "";
+let running = false;        // un bot tourne-t-il ?
+let suppressSync = false;   // évite de renvoyer /update quand on règle les champs par programme
 
 // Charge la config par défaut depuis le serveur
 async function loadDefaults() {
@@ -157,7 +196,7 @@ async function loadDefaults() {
     if (d.config_path) configPath = d.config_path;
     document.getElementById("chk-visible").checked = !d.default_headless;
     updateVisibleLabel();
-    if (d.running) setLaunchDisabled(true);
+    if (d.running) setRunning(true);
   } catch (_) {}
 }
 
@@ -165,20 +204,92 @@ function changeTotal(delta) {
   const inp = document.getElementById("inp-total");
   const v = Math.max(1, (parseInt(inp.value) || 150) + delta);
   inp.value = v;
+  pushUpdate();   // si un run est en cours, applique la nouvelle cible en direct
 }
 
 function updateVisibleLabel() {
   const v = document.getElementById("chk-visible").checked;
   document.getElementById("lbl-visible").textContent = v ? "Visible" : "Invisible";
 }
-document.getElementById("chk-visible").addEventListener("change", updateVisibleLabel);
 
-function setLaunchDisabled(disabled) {
-  document.getElementById("btn-launch").disabled = disabled;
-  document.getElementById("btn-minus").disabled = disabled;
-  document.getElementById("btn-plus").disabled = disabled;
-  document.getElementById("inp-total").disabled = disabled;
-  document.getElementById("chk-visible").disabled = disabled;
+function updateSpeedLabel() {
+  const s = parseFloat(document.getElementById("rng-speed").value);
+  const el = document.getElementById("speed-val");
+  el.textContent = "×" + s;
+  el.className = "speed-val" + (s >= 5 ? " danger" : s >= 2.5 ? " turbo" : "");
+  refreshWarn();
+}
+
+document.getElementById("chk-visible").addEventListener("change", () => {
+  updateVisibleLabel(); pushUpdate();
+});
+document.getElementById("rng-speed").addEventListener("input", updateSpeedLabel);
+document.getElementById("rng-speed").addEventListener("change", pushUpdate);
+document.getElementById("inp-total").addEventListener("change", pushUpdate);
+
+// Bascule l'UI entre « prêt à lancer » et « en cours ». Les contrôles restent
+// ACTIFS pendant le run (nombre / visible / vitesse modifiables en direct) ;
+// seul le bouton Lancer est désactivé et Arrêter est activé.
+function setRunning(on) {
+  running = on;
+  document.getElementById("btn-launch").disabled = on;
+  document.getElementById("btn-stop").disabled = !on;
+}
+
+// Pousse les réglages courants vers le bot SI un run est en cours.
+let pushTimer = null;
+function pushUpdate() {
+  if (!running || suppressSync) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(async () => {
+    const total = parseInt(document.getElementById("inp-total").value) || 1;
+    const headless = !document.getElementById("chk-visible").checked;
+    const speed = parseFloat(document.getElementById("rng-speed").value) || 1;
+    try {
+      await fetch("/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ total, headless, speed }),
+      });
+    } catch (_) {}
+  }, 250);
+}
+
+async function stopBot() {
+  if (!confirm("Arrêter le bot ? Il finira la réponse en cours puis s'arrêtera.")) return;
+  try {
+    const r = await fetch("/stop", { method: "POST" });
+    if (r.ok) {
+      document.getElementById("btn-stop").disabled = true;
+      showToast("Arrêt demandé — fin de la réponse en cours…", "#d29922");
+    }
+  } catch (e) {
+    showToast("Impossible de contacter le serveur : " + e.message);
+  }
+}
+
+// Avertissement santé Sphinx : turbo seul = prudence ; turbo + erreurs en rafale
+// = on tape trop fort, le serveur « crame ». Mis à jour par updateSpeedLabel() et tick().
+let lastErrRate = 0;
+function refreshWarn() {
+  const s = parseFloat(document.getElementById("rng-speed").value);
+  const w = document.getElementById("warn");
+  if (lastErrRate >= 40 && s > 1.5) {
+    w.className = "warn danger show";
+    w.innerHTML = "🔥 <b>Sphinx sature</b> — " + lastErrRate +
+      " % d'erreurs récentes à ×" + s +
+      ". Réduis la vitesse : le serveur n'encaisse pas le rythme.";
+  } else if (s >= 5) {
+    w.className = "warn danger show";
+    w.innerHTML = "⚠️ <b>Vitesse extrême (×" + s + ")</b> — risque de timeouts et de " +
+      "charge anormale sur Sphinx. À réserver à tes propres formulaires de test.";
+  } else if (s >= 2.5) {
+    w.className = "warn show";
+    w.innerHTML = "⚡ <b>Mode turbo (×" + s + ")</b> — délais réduits. Surveille le taux " +
+      "d'erreurs ; si ça grimpe, ralentis.";
+  } else {
+    w.className = "warn";
+  }
 }
 
 function showToast(msg, color) {
@@ -192,15 +303,16 @@ function showToast(msg, color) {
 async function launch() {
   const total = parseInt(document.getElementById("inp-total").value) || 150;
   const visible = document.getElementById("chk-visible").checked;
+  const speed = parseFloat(document.getElementById("rng-speed").value) || 1;
   try {
     const r = await fetch("/launch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ total, headless: !visible, config_path: configPath }),
+      body: JSON.stringify({ total, headless: !visible, speed, config_path: configPath }),
     });
     const d = await r.json();
     if (d.ok) {
-      setLaunchDisabled(true);
+      setRunning(true);
       showToast("Bot lancé — " + total + " réponses" + (visible ? " (visible)" : " (invisible)"), "#238636");
     } else {
       showToast(d.error || "Erreur");
@@ -224,14 +336,26 @@ async function tick() {
     const d = await res.json();
 
     const pill = document.getElementById("pill");
-    if (d.status === "done") {
-      pill.className = "pill done"; pill.textContent = "terminé ✓";
+    if (d.status === "done" || d.status === "stopped") {
+      const stopped = d.status === "stopped";
+      pill.className = "pill done"; pill.textContent = stopped ? "arrêté ■" : "terminé ✓";
       document.getElementById("bar").classList.add("done");
-      setLaunchDisabled(false); // réactiver pour un nouveau run
+      setRunning(false); // réactiver pour un nouveau run
     } else {
       pill.className = "pill running"; pill.textContent = "en cours…";
-      setLaunchDisabled(true);
+      setRunning(true);
+      // Reflète l'état réel côté bot dans les contrôles, sans déclencher /update.
+      suppressSync = true;
+      if (typeof d.speed === "number") {
+        document.getElementById("rng-speed").value = d.speed;
+        updateSpeedLabel();
+      }
+      suppressSync = false;
     }
+
+    // Santé Sphinx : alimente l'avertissement avec le taux d'erreur récent.
+    lastErrRate = d.recent_error_rate || 0;
+    refreshWarn();
 
     document.getElementById("url").textContent =
       "Questionnaire : " + (d.url || "") + "  ·  config : " + (d.config || "");
@@ -255,10 +379,12 @@ async function tick() {
       log.appendChild(div);
     });
 
+    const tail = d.status === "done" ? "  ·  TERMINÉ"
+      : d.status === "stopped" ? "  ·  ARRÊTÉ"
+      : "  ·  rafraîchissement auto toutes les 2 s";
     document.getElementById("foot").textContent =
       "Dernière mise à jour : " + (d.updated_at || "—") +
-      "  ·  écoulé : " + fmt(d.elapsed_sec) +
-      (d.status === "done" ? "  ·  TERMINÉ" : "  ·  rafraîchissement auto toutes les 2 s");
+      "  ·  écoulé : " + fmt(d.elapsed_sec) + tail;
   } catch (e) {
     document.getElementById("foot").textContent =
       "En attente de progress.json… (le bot n'a pas encore démarré)";
@@ -266,6 +392,7 @@ async function tick() {
 }
 
 loadDefaults();
+updateSpeedLabel();
 tick();
 setInterval(tick, 2000);
 </script>
