@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bot Sphinx — Suivi d'avancement</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #0d1117; color: #e6edf3; margin: 0; padding: 32px;
+    display: flex; justify-content: center;
+  }
+  .wrap { width: 100%; max-width: 720px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: #8b949e; font-size: 13px; margin-bottom: 24px; word-break: break-all; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 24px; margin-bottom: 16px; }
+  .barwrap { background: #21262d; border-radius: 8px; height: 28px; overflow: hidden; position: relative; }
+  .bar { background: linear-gradient(90deg,#238636,#2ea043); height: 100%; width: 0%; transition: width .4s ease; }
+  .bar.done { background: linear-gradient(90deg,#1f6feb,#388bfd); }
+  .barlabel { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 20px; }
+  .stat { text-align: center; }
+  .stat .n { font-size: 26px; font-weight: 700; }
+  .stat .l { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: .5px; }
+  .ok .n { color: #3fb950; }
+  .err .n { color: #f85149; }
+  .log { font-family: "SF Mono", Consolas, monospace; font-size: 12px; line-height: 1.7; }
+  .log div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .log .OK { color: #3fb950; }
+  .log .TIMEOUT, .log .ERREUR { color: #f85149; }
+  .pill { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .pill.running { background: #1f6feb33; color: #58a6ff; }
+  .pill.done { background: #23863633; color: #3fb950; }
+  .pill.waiting { background: #6e768166; color: #8b949e; }
+  .foot { color: #6e7681; font-size: 12px; margin-top: 8px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🤖 Bot Sphinx — Suivi en direct <span id="pill" class="pill waiting">en attente…</span></h1>
+  <div class="sub" id="url">En attente du démarrage du bot…</div>
+
+  <div class="card">
+    <div class="barwrap"><div class="bar" id="bar"></div><div class="barlabel" id="barlabel">0 %</div></div>
+    <div class="stats">
+      <div class="stat"><div class="n" id="done">0</div><div class="l">Faites</div></div>
+      <div class="stat ok"><div class="n" id="ok">0</div><div class="l">Réussies</div></div>
+      <div class="stat err"><div class="n" id="errors">0</div><div class="l">Erreurs</div></div>
+      <div class="stat"><div class="n" id="eta">—</div><div class="l">Temps restant</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="l" style="color:#8b949e;font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">Dernières réponses</div>
+    <div class="log" id="log"><div>—</div></div>
+  </div>
+
+  <div class="foot" id="foot">Cette page se rafraîchit automatiquement toutes les 2 secondes.</div>
+</div>
+
+<script>
+function fmt(sec) {
+  if (sec === null || sec === undefined) return "—";
+  if (sec < 60) return sec + " s";
+  const m = Math.floor(sec / 60), s = sec % 60;
+  return m + " min " + (s < 10 ? "0" : "") + s + " s";
+}
+
+async function tick() {
+  try {
+    // cache-bust pour toujours relire le fichier sur disque
+    const res = await fetch("progress.json?t=" + Date.now(), { cache: "no-store" });
+    if (!res.ok) throw new Error("no file");
+    const d = await res.json();
+
+    const pill = document.getElementById("pill");
+    if (d.status === "done") {
+      pill.className = "pill done"; pill.textContent = "terminé ✓";
+      document.getElementById("bar").classList.add("done");
+    } else {
+      pill.className = "pill running"; pill.textContent = "en cours…";
+    }
+
+    document.getElementById("url").textContent = "Questionnaire : " + (d.url || "") + "  ·  config : " + (d.config || "");
+    document.getElementById("bar").style.width = (d.percent || 0) + "%";
+    document.getElementById("barlabel").textContent = (d.percent || 0) + " %  (" + (d.done||0) + " / " + (d.total||0) + ")";
+    document.getElementById("done").textContent = d.done || 0;
+    document.getElementById("ok").textContent = d.success || 0;
+    document.getElementById("errors").textContent = d.errors || 0;
+    document.getElementById("eta").textContent = d.status === "done" ? "✓" : fmt(d.eta_sec);
+
+    const log = document.getElementById("log");
+    log.innerHTML = "";
+    (d.recent || []).slice().reverse().forEach(line => {
+      const div = document.createElement("div");
+      let cls = "";
+      if (line.includes("OK")) cls = "OK";
+      else if (line.includes("TIMEOUT")) cls = "TIMEOUT";
+      else if (line.includes("ERREUR")) cls = "ERREUR";
+      div.className = cls;
+      div.textContent = line;
+      log.appendChild(div);
+    });
+
+    document.getElementById("foot").textContent =
+      "Dernière mise à jour : " + (d.updated_at || "—") +
+      "  ·  écoulé : " + fmt(d.elapsed_sec) +
+      (d.status === "done" ? "  ·  TERMINÉ" : "  ·  rafraîchissement auto toutes les 2 s");
+  } catch (e) {
+    document.getElementById("foot").textContent =
+      "En attente de progress.json (le bot n'a pas encore démarré, ou est lancé depuis un autre dossier)…";
+  }
+}
+tick();
+setInterval(tick, 2000);
+</script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+# Archives locales (anciens scripts codés en dur, non publiés)
+_archive_local/
+
+# Fichiers générés à l'exécution
+progress.json
+progress.json.tmp
+config_squelette.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Navigateurs Playwright (installés localement)
+.cache/

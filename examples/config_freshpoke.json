@@ -1,0 +1,166 @@
+{
+  "_description": "Config de référence (EXEMPLE). Montre toutes les règles : weights_if / override_if / constraint / visible_if. L'URL ci-dessous est factice — remplacez-la par la vôtre, ou générez une config avec explore_sphinx.py.",
+  "url": "https://exemple.sphinxonline.net/SurveyServer/s/XXXXXX",
+  "post_url_match": "/surveyserver/s/xxxxxx",
+  "locale": "fr-FR",
+
+  "pages": [
+    { "kind": "intro", "next": "ssvnext", "questions": [] },
+
+    { "kind": "questions", "next": "ssvnext",
+      "questions": ["sexe", "age", "situation", "situation_autre", "lieu"] },
+
+    { "kind": "questions", "next": "ssvnext",
+      "questions": ["frequence", "lieux_achat", "lieux_achat_autre", "raisons", "raisons_autre"] },
+
+    { "kind": "questions", "next": "ssvnext",
+      "questions": ["interet", "attraits", "attraits_autre", "freins", "freins_autre"] },
+
+    { "kind": "questions", "next": "ssvnext",
+      "questions": ["nom", "nom_autre", "evocation", "evocation_autre"] },
+
+    { "kind": "questions", "next": "ssvsave",
+      "questions": ["prix_min", "prix_max"] }
+  ],
+
+  "questions": {
+    "sexe": {
+      "type": "radio", "field": "991421222",
+      "weights": { "1": 45, "2": 45, "3": 7, "4": 3 }
+    },
+
+    "situation": {
+      "type": "radio", "field": "1184619299",
+      "weights": { "1": 30, "2": 20, "3": 20, "4": 20, "5": 7, "6": 3 }
+    },
+    "situation_autre": {
+      "type": "text", "field": "105950779",
+      "visible_if": { "field": "situation", "in": [6] },
+      "value": ["En reconversion", "Indépendant", "Retraité"]
+    },
+
+    "age": {
+      "type": "radio", "field": "1910991696",
+      "weights": { "1": 5, "2": 20, "3": 30, "4": 30, "5": 15 },
+      "weights_if": [
+        { "when": { "situation": [1, 2] }, "weights": { "1": 10, "2": 75, "3": 15 } },
+        { "when": { "situation": [3] },    "weights": { "2": 50, "3": 50 } },
+        { "when": { "situation": [4] },    "weights": { "3": 20, "4": 50, "5": 30 } }
+      ]
+    },
+
+    "lieu": {
+      "type": "radio", "field": "677936026",
+      "weights": { "1": 35, "2": 35, "3": 20, "4": 10 }
+    },
+
+    "frequence": {
+      "type": "radio", "field": "1819887958",
+      "weights": { "1": 5, "2": 10, "3": 30, "4": 30, "5": 25 }
+    },
+
+    "lieux_achat": {
+      "type": "checkbox", "field": "1141946520",
+      "weights": { "1": 50, "2": 30, "3": 25, "4": 20, "5": 15 },
+      "select_count": { "1": 50, "2": 35, "3": 15 },
+      "override_if": [
+        { "when": { "frequence": [1] }, "value": [6] }
+      ]
+    },
+    "lieux_achat_autre": {
+      "type": "text", "field": "1657756846",
+      "visible_if": { "field": "lieux_achat", "in": [7] },
+      "value": ["Marché", "Traiteur"]
+    },
+
+    "raisons": {
+      "type": "checkbox", "field": "150438363",
+      "weights": { "1": 55, "2": 40, "3": 50, "4": 35, "5": 30, "6": 35, "7": 25 },
+      "select_count": { "1": 30, "2": 45, "3": 25 },
+      "override_if": [
+        { "when": { "frequence": [1] }, "value": [8] }
+      ]
+    },
+    "raisons_autre": {
+      "type": "text", "field": "1334277370",
+      "visible_if": { "field": "raisons", "in": [9] },
+      "value": ["Par habitude"]
+    },
+
+    "interet": {
+      "type": "radio", "field": "298096636",
+      "weights": { "1": 25, "2": 40, "3": 25, "4": 10 },
+      "weights_if": [
+        { "when": { "frequence": [4, 5] }, "weights": { "1": 40, "2": 40, "3": 15, "4": 5 } },
+        { "when": { "frequence": [1] },    "weights": { "1": 10, "2": 25, "3": 40, "4": 25 } }
+      ]
+    },
+
+    "attraits": {
+      "type": "checkbox", "field": "1067884794",
+      "weights": { "1": 45, "2": 40, "3": 35, "4": 30, "5": 25, "6": 25 },
+      "select_count": { "1": 30, "2": 45, "3": 25 },
+      "override_if": [
+        { "when": { "interet": [3, 4] }, "value": [7] }
+      ]
+    },
+    "attraits_autre": {
+      "type": "text", "field": "329549063",
+      "visible_if": { "field": "attraits", "in": [8] },
+      "value": ["Le concept"]
+    },
+
+    "freins": {
+      "type": "checkbox", "field": "760171318",
+      "weights": { "1": 50, "2": 20, "3": 30, "4": 35, "5": 20 },
+      "select_count": { "1": 60, "2": 40 },
+      "override_if": [
+        { "when": { "interet": [1] }, "value": [6] }
+      ]
+    },
+    "freins_autre": {
+      "type": "text", "field": "1141445712",
+      "visible_if": { "field": "freins", "in": [7] },
+      "value": ["Manque d'information"]
+    },
+
+    "nom": {
+      "type": "radio", "field": "1006591292",
+      "weights": { "1": 45, "2": 25, "3": 20, "4": 10 }
+    },
+    "nom_autre": {
+      "type": "text", "field": "1707691323",
+      "visible_if": { "field": "nom", "in": [4] },
+      "value": ["PokeFresh", "Poke&Go"]
+    },
+
+    "evocation": {
+      "type": "radio", "field": "693391466",
+      "weights": { "1": 30, "2": 20, "3": 25, "4": 15, "5": 20, "6": 10 }
+    },
+    "evocation_autre": {
+      "type": "text", "field": "1360845723",
+      "visible_if": { "field": "evocation", "in": [7] },
+      "value": ["Un produit tendance"]
+    },
+
+    "prix_min": {
+      "type": "radio", "field": "1919286262",
+      "weights": { "1": 5, "2": 15, "3": 20, "4": 25, "5": 15, "6": 10, "7": 5, "8": 3, "9": 1, "10": 1, "11": 0 },
+      "weights_if": [
+        { "when": { "situation": [1, 2] },
+          "weights": { "1": 5, "2": 15, "3": 20, "4": 25, "5": 15, "6": 10, "7": 5, "8": 3, "9": 1, "10": 1, "11": 0 } }
+      ]
+    },
+
+    "prix_max": {
+      "type": "radio", "field": "733761204",
+      "weights": { "1": 1, "2": 2, "3": 5, "4": 10, "5": 15, "6": 20, "7": 20, "8": 15, "9": 7, "10": 4, "11": 1 },
+      "weights_if": [
+        { "when": { "situation": [1, 2] },
+          "weights": { "1": 1, "2": 5, "3": 10, "4": 20, "5": 25, "6": 20, "7": 10, "8": 5, "9": 2, "10": 1, "11": 1 } }
+      ],
+      "constraint": { "gte_field": "prix_min" }
+    }
+  }
+}
