@@ -16,6 +16,51 @@
   h1 { font-size: 20px; margin: 0 0 4px; }
   .sub { color: #8b949e; font-size: 13px; margin-bottom: 24px; word-break: break-all; }
   .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 24px; margin-bottom: 16px; }
+
+  /* Panneau de contrôle */
+  .controls { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .ctrl-group { display: flex; flex-direction: column; gap: 6px; }
+  .ctrl-group label { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: .5px; }
+  .counter { display: flex; align-items: center; gap: 8px; }
+  .counter button {
+    width: 32px; height: 32px; border-radius: 8px; border: 1px solid #30363d;
+    background: #21262d; color: #e6edf3; font-size: 18px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; line-height: 1;
+  }
+  .counter button:hover { background: #30363d; }
+  .counter input {
+    width: 70px; text-align: center; background: #21262d; border: 1px solid #30363d;
+    border-radius: 8px; color: #e6edf3; font-size: 16px; font-weight: 700;
+    padding: 4px 8px; height: 32px;
+  }
+  .counter input::-webkit-inner-spin-button { -webkit-appearance: none; }
+
+  /* Toggle visible/headless */
+  .toggle-wrap { display: flex; align-items: center; gap: 10px; }
+  .toggle { position: relative; width: 48px; height: 26px; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .slider {
+    position: absolute; inset: 0; background: #21262d; border-radius: 999px;
+    cursor: pointer; transition: background .2s; border: 1px solid #30363d;
+  }
+  .slider:before {
+    content: ""; position: absolute; left: 3px; top: 3px;
+    width: 18px; height: 18px; background: #8b949e; border-radius: 50%; transition: .2s;
+  }
+  .toggle input:checked + .slider { background: #1f6feb; border-color: #1f6feb; }
+  .toggle input:checked + .slider:before { transform: translateX(22px); background: #fff; }
+  .toggle-label { font-size: 13px; color: #e6edf3; min-width: 90px; }
+
+  /* Bouton lancer */
+  .btn-launch {
+    margin-left: auto; padding: 0 24px; height: 40px; border-radius: 8px;
+    border: none; background: #238636; color: #fff; font-size: 14px; font-weight: 600;
+    cursor: pointer; transition: background .15s; white-space: nowrap;
+  }
+  .btn-launch:hover:not(:disabled) { background: #2ea043; }
+  .btn-launch:disabled { background: #21262d; color: #6e7681; cursor: not-allowed; }
+
+  /* Barre de progression */
   .barwrap { background: #21262d; border-radius: 8px; height: 28px; overflow: hidden; position: relative; }
   .bar { background: linear-gradient(90deg,#238636,#2ea043); height: 100%; width: 0%; transition: width .4s ease; }
   .bar.done { background: linear-gradient(90deg,#1f6feb,#388bfd); }
@@ -26,15 +71,23 @@
   .stat .l { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: .5px; }
   .ok .n { color: #3fb950; }
   .err .n { color: #f85149; }
+
+  /* Log */
   .log { font-family: "SF Mono", Consolas, monospace; font-size: 12px; line-height: 1.7; }
   .log div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .log .OK { color: #3fb950; }
   .log .TIMEOUT, .log .ERREUR { color: #f85149; }
+
   .pill { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
   .pill.running { background: #1f6feb33; color: #58a6ff; }
   .pill.done { background: #23863633; color: #3fb950; }
   .pill.waiting { background: #6e768166; color: #8b949e; }
   .foot { color: #6e7681; font-size: 12px; margin-top: 8px; text-align: center; }
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: #f85149; color: #fff; padding: 10px 20px; border-radius: 8px;
+    font-size: 13px; font-weight: 600; display: none; z-index: 99;
+  }
 </style>
 </head>
 <body>
@@ -42,6 +95,34 @@
   <h1>🤖 Bot Sphinx — Suivi en direct <span id="pill" class="pill waiting">en attente…</span></h1>
   <div class="sub" id="url">En attente du démarrage du bot…</div>
 
+  <!-- Panneau de contrôle -->
+  <div class="card">
+    <div class="controls">
+      <div class="ctrl-group">
+        <label>Nombre de réponses</label>
+        <div class="counter">
+          <button id="btn-minus" onclick="changeTotal(-10)">−</button>
+          <input id="inp-total" type="number" min="1" max="9999" value="150">
+          <button id="btn-plus" onclick="changeTotal(+10)">+</button>
+        </div>
+      </div>
+
+      <div class="ctrl-group">
+        <label>Mode navigateur</label>
+        <div class="toggle-wrap">
+          <label class="toggle">
+            <input type="checkbox" id="chk-visible" checked>
+            <span class="slider"></span>
+          </label>
+          <span class="toggle-label" id="lbl-visible">Visible</span>
+        </div>
+      </div>
+
+      <button class="btn-launch" id="btn-launch" onclick="launch()">▶ Lancer</button>
+    </div>
+  </div>
+
+  <!-- Progression -->
   <div class="card">
     <div class="barwrap"><div class="bar" id="bar"></div><div class="barlabel" id="barlabel">0 %</div></div>
     <div class="stats">
@@ -52,6 +133,7 @@
     </div>
   </div>
 
+  <!-- Log -->
   <div class="card">
     <div class="l" style="color:#8b949e;font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">Dernières réponses</div>
     <div class="log" id="log"><div>—</div></div>
@@ -60,7 +142,74 @@
   <div class="foot" id="foot">Cette page se rafraîchit automatiquement toutes les 2 secondes.</div>
 </div>
 
+<div class="toast" id="toast"></div>
+
 <script>
+let configPath = "";
+
+// Charge la config par défaut depuis le serveur
+async function loadDefaults() {
+  try {
+    const r = await fetch("/bot-config?" + Date.now(), { cache: "no-store" });
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d.default_total) document.getElementById("inp-total").value = d.default_total;
+    if (d.config_path) configPath = d.config_path;
+    document.getElementById("chk-visible").checked = !d.default_headless;
+    updateVisibleLabel();
+    if (d.running) setLaunchDisabled(true);
+  } catch (_) {}
+}
+
+function changeTotal(delta) {
+  const inp = document.getElementById("inp-total");
+  const v = Math.max(1, (parseInt(inp.value) || 150) + delta);
+  inp.value = v;
+}
+
+function updateVisibleLabel() {
+  const v = document.getElementById("chk-visible").checked;
+  document.getElementById("lbl-visible").textContent = v ? "Visible" : "Invisible";
+}
+document.getElementById("chk-visible").addEventListener("change", updateVisibleLabel);
+
+function setLaunchDisabled(disabled) {
+  document.getElementById("btn-launch").disabled = disabled;
+  document.getElementById("btn-minus").disabled = disabled;
+  document.getElementById("btn-plus").disabled = disabled;
+  document.getElementById("inp-total").disabled = disabled;
+  document.getElementById("chk-visible").disabled = disabled;
+}
+
+function showToast(msg, color) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.style.background = color || "#f85149";
+  t.style.display = "block";
+  setTimeout(() => t.style.display = "none", 3000);
+}
+
+async function launch() {
+  const total = parseInt(document.getElementById("inp-total").value) || 150;
+  const visible = document.getElementById("chk-visible").checked;
+  try {
+    const r = await fetch("/launch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ total, headless: !visible, config_path: configPath }),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      setLaunchDisabled(true);
+      showToast("Bot lancé — " + total + " réponses" + (visible ? " (visible)" : " (invisible)"), "#238636");
+    } else {
+      showToast(d.error || "Erreur");
+    }
+  } catch (e) {
+    showToast("Impossible de contacter le serveur : " + e.message);
+  }
+}
+
 function fmt(sec) {
   if (sec === null || sec === undefined) return "—";
   if (sec < 60) return sec + " s";
@@ -70,7 +219,6 @@ function fmt(sec) {
 
 async function tick() {
   try {
-    // cache-bust pour toujours relire le fichier sur disque
     const res = await fetch("progress.json?t=" + Date.now(), { cache: "no-store" });
     if (!res.ok) throw new Error("no file");
     const d = await res.json();
@@ -79,13 +227,17 @@ async function tick() {
     if (d.status === "done") {
       pill.className = "pill done"; pill.textContent = "terminé ✓";
       document.getElementById("bar").classList.add("done");
+      setLaunchDisabled(false); // réactiver pour un nouveau run
     } else {
       pill.className = "pill running"; pill.textContent = "en cours…";
+      setLaunchDisabled(true);
     }
 
-    document.getElementById("url").textContent = "Questionnaire : " + (d.url || "") + "  ·  config : " + (d.config || "");
+    document.getElementById("url").textContent =
+      "Questionnaire : " + (d.url || "") + "  ·  config : " + (d.config || "");
     document.getElementById("bar").style.width = (d.percent || 0) + "%";
-    document.getElementById("barlabel").textContent = (d.percent || 0) + " %  (" + (d.done||0) + " / " + (d.total||0) + ")";
+    document.getElementById("barlabel").textContent =
+      (d.percent || 0) + " %  (" + (d.done || 0) + " / " + (d.total || 0) + ")";
     document.getElementById("done").textContent = d.done || 0;
     document.getElementById("ok").textContent = d.success || 0;
     document.getElementById("errors").textContent = d.errors || 0;
@@ -99,8 +251,7 @@ async function tick() {
       if (line.includes("OK")) cls = "OK";
       else if (line.includes("TIMEOUT")) cls = "TIMEOUT";
       else if (line.includes("ERREUR")) cls = "ERREUR";
-      div.className = cls;
-      div.textContent = line;
+      div.className = cls; div.textContent = line;
       log.appendChild(div);
     });
 
@@ -110,9 +261,11 @@ async function tick() {
       (d.status === "done" ? "  ·  TERMINÉ" : "  ·  rafraîchissement auto toutes les 2 s");
   } catch (e) {
     document.getElementById("foot").textContent =
-      "En attente de progress.json (le bot n'a pas encore démarré, ou est lancé depuis un autre dossier)…";
+      "En attente de progress.json… (le bot n'a pas encore démarré)";
   }
 }
+
+loadDefaults();
 tick();
 setInterval(tick, 2000);
 </script>
