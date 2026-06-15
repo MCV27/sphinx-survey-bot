@@ -101,6 +101,8 @@
   .log div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .log .OK { color: #3fb950; }
   .log .TIMEOUT, .log .ERREUR { color: #f85149; }
+  /* Données figées d'un run terminé/arrêté : on grise tout le bloc progression+log. */
+  .stale { opacity: .5; filter: grayscale(.4); }
 
   .pill { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
   .pill.running { background: #1f6feb33; color: #58a6ff; }
@@ -160,7 +162,7 @@
   </div>
 
   <!-- Progression -->
-  <div class="card">
+  <div class="card" id="card-progress">
     <div class="barwrap"><div class="bar" id="bar"></div><div class="barlabel" id="barlabel">0 %</div></div>
     <div class="stats">
       <div class="stat"><div class="n" id="done">0</div><div class="l">Faites</div></div>
@@ -171,8 +173,8 @@
   </div>
 
   <!-- Log -->
-  <div class="card">
-    <div class="l" style="color:#8b949e;font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">Dernières réponses</div>
+  <div class="card" id="card-log">
+    <div class="l" id="log-title" style="color:#8b949e;font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">Dernières réponses</div>
     <div class="log" id="log"><div>—</div></div>
   </div>
 
@@ -225,6 +227,9 @@ document.getElementById("chk-visible").addEventListener("change", () => {
 });
 document.getElementById("rng-speed").addEventListener("input", updateSpeedLabel);
 document.getElementById("rng-speed").addEventListener("change", pushUpdate);
+// 'input' = à chaque frappe clavier (debouncé), pas seulement au blur, sinon
+// taper « 205 » dans le champ ne mettait jamais le total à jour côté bot.
+document.getElementById("inp-total").addEventListener("input", pushUpdate);
 document.getElementById("inp-total").addEventListener("change", pushUpdate);
 
 // Bascule l'UI entre « prêt à lancer » et « en cours ». Les contrôles restent
@@ -233,7 +238,9 @@ document.getElementById("inp-total").addEventListener("change", pushUpdate);
 function setRunning(on) {
   running = on;
   document.getElementById("btn-launch").disabled = on;
-  document.getElementById("btn-stop").disabled = !on;
+  const stop = document.getElementById("btn-stop");
+  stop.disabled = !on;
+  stop.textContent = "■ Arrêter";  // réinitialise le libellé (après un « Arrêt… »)
 }
 
 // Pousse les réglages courants vers le bot SI un run est en cours.
@@ -256,15 +263,26 @@ function pushUpdate() {
 }
 
 async function stopBot() {
-  if (!confirm("Arrêter le bot ? Il finira la réponse en cours puis s'arrêtera.")) return;
+  if (!confirm("Arrêter le bot ? Il finira la réponse EN COURS (ça peut prendre ~30 s) puis s'arrêtera.")) return;
+  const btn = document.getElementById("btn-stop");
+  btn.disabled = true;
+  btn.textContent = "■ Arrêt…";
   try {
     const r = await fetch("/stop", { method: "POST" });
-    if (r.ok) {
-      document.getElementById("btn-stop").disabled = true;
+    let d = {};
+    try { d = await r.json(); } catch (_) {}
+    if (r.ok && d.ok) {
       showToast("Arrêt demandé — fin de la réponse en cours…", "#d29922");
+    } else {
+      // 409 = plus aucun bot en cours côté serveur : on resynchronise l'UI.
+      showToast(d.error || "Aucun bot à arrêter", "#d29922");
+      setRunning(false);
+      btn.textContent = "■ Arrêter";
     }
   } catch (e) {
     showToast("Impossible de contacter le serveur : " + e.message);
+    btn.disabled = false;
+    btn.textContent = "■ Arrêter";
   }
 }
 
@@ -330,21 +348,37 @@ function fmt(sec) {
 }
 
 async function tick() {
+  // Autorité sur « un bot tourne-t-il ? » = le SERVEUR, pas progress.json (qui
+  // peut être un vieux fichier d'un run mort). C'est ce qui pilote Lancer/Arrêter
+  // et le grisage « obsolète ».
+  let serverRunning = running;
+  try {
+    const rc = await fetch("/bot-config?" + Date.now(), { cache: "no-store" });
+    if (rc.ok) serverRunning = (await rc.json()).running;
+  } catch (_) {}
+
   try {
     const res = await fetch("progress.json?t=" + Date.now(), { cache: "no-store" });
     if (!res.ok) throw new Error("no file");
     const d = await res.json();
 
     const pill = document.getElementById("pill");
-    if (d.status === "done" || d.status === "stopped") {
+    const stale = !serverRunning;          // données figées : plus de bot actif
+    setRunning(serverRunning);             // Lancer réactivé / Arrêter grisé dès que le bot s'arrête
+    document.getElementById("card-progress").classList.toggle("stale", stale);
+    document.getElementById("card-log").classList.toggle("stale", stale);
+
+    if (stale) {
       const stopped = d.status === "stopped";
       pill.className = "pill done"; pill.textContent = stopped ? "arrêté ■" : "terminé ✓";
       document.getElementById("bar").classList.add("done");
-      setRunning(false); // réactiver pour un nouveau run
+      document.getElementById("log-title").textContent =
+        "Dernier run (" + (stopped ? "arrêté" : "terminé") + ") — historique figé";
     } else {
       pill.className = "pill running"; pill.textContent = "en cours…";
-      setRunning(true);
-      // Reflète l'état réel côté bot dans les contrôles, sans déclencher /update.
+      document.getElementById("bar").classList.remove("done");
+      document.getElementById("log-title").textContent = "Dernières réponses";
+      // Reflète la vitesse réelle côté bot dans le curseur, sans déclencher /update.
       suppressSync = true;
       if (typeof d.speed === "number") {
         document.getElementById("rng-speed").value = d.speed;
@@ -365,7 +399,7 @@ async function tick() {
     document.getElementById("done").textContent = d.done || 0;
     document.getElementById("ok").textContent = d.success || 0;
     document.getElementById("errors").textContent = d.errors || 0;
-    document.getElementById("eta").textContent = d.status === "done" ? "✓" : fmt(d.eta_sec);
+    document.getElementById("eta").textContent = stale ? "✓" : fmt(d.eta_sec);
 
     const log = document.getElementById("log");
     log.innerHTML = "";
@@ -379,13 +413,15 @@ async function tick() {
       log.appendChild(div);
     });
 
-    const tail = d.status === "done" ? "  ·  TERMINÉ"
-      : d.status === "stopped" ? "  ·  ARRÊTÉ"
+    const tail = !serverRunning
+      ? (d.status === "stopped" ? "  ·  ARRÊTÉ" : "  ·  TERMINÉ")
       : "  ·  rafraîchissement auto toutes les 2 s";
     document.getElementById("foot").textContent =
       "Dernière mise à jour : " + (d.updated_at || "—") +
       "  ·  écoulé : " + fmt(d.elapsed_sec) + tail;
   } catch (e) {
+    // Pas (encore) de progress.json : on se fie à l'état serveur pour Lancer/Arrêter.
+    setRunning(serverRunning);
     document.getElementById("foot").textContent =
       "En attente de progress.json… (le bot n'a pas encore démarré)";
   }

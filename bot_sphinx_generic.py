@@ -214,8 +214,15 @@ def generate_profile(cfg, rng=random):
 # Helpers d'interaction Playwright (repris de bot_sphinx.py, rendus génériques)
 # ---------------------------------------------------------------------------
 
+# Facteur de vitesse global lu par human_delay (et la pause entre réponses).
+# 1.0 = vitesse normale (réaliste). >1.0 = plus rapide (délais divisés). Réglé
+# par RunControl.speed au début de chaque réponse. Voir l'avertissement dans run().
+_SPEED = 1.0
+
+
 def human_delay(mini=0.3, maxi=0.9):
-    time.sleep(random.uniform(mini, maxi))
+    factor = max(0.1, _SPEED)
+    time.sleep(random.uniform(mini, maxi) / factor)
 
 
 def _selector_for(qdef, value=None):
@@ -358,6 +365,17 @@ def fill_survey(cfg, profile, headless=True):
 PROGRESS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "progress.json")
 
 
+# Contrôles modifiables EN COURS DE RUN depuis le dashboard (via run_bot.py).
+# Un objet mutable partagé : run_bot.py garde une référence et le modifie quand
+# l'utilisateur change le nombre de réponses, le mode visible, ou clique « Arrêter ».
+class RunControl:
+    def __init__(self, total, headless, speed=1.0):
+        self.total = total          # cible courante (ajustable)
+        self.headless = headless    # mode navigateur courant (ajustable)
+        self.speed = speed          # facteur de vitesse (>1 = plus rapide), ajustable
+        self.stop = False           # passe à True pour arrêter proprement
+
+
 def _write_progress(state):
     """Écrit l'état courant dans progress.json (écriture atomique)."""
     try:
@@ -374,29 +392,48 @@ def _write_progress(state):
 # Boucle principale
 # ---------------------------------------------------------------------------
 
-def run(config_path, total, headless=True):
+def run(config_path, total, headless=True, control=None):
+    """Remplit le questionnaire `total` fois.
+
+    Si `control` (RunControl) est fourni, le nombre de réponses, le mode
+    navigateur et l'arrêt peuvent être modifiés EN COURS DE RUN depuis le
+    dashboard. Sinon on s'en tient aux valeurs passées en argument.
+    """
     cfg = load_config(config_path)
+    if control is None:
+        control = RunControl(total, headless)
     success = 0
     errors = 0
     started = time.time()
     recent = []  # dernières lignes pour le dashboard
+    last_outcomes = []  # 'ok' / 'err' des ~10 dernières réponses (santé Sphinx)
 
     def push_progress(status, last_line):
         recent.append(last_line)
         del recent[:-12]  # ne garder que les 12 dernières
         done = success + errors
+        # Taux d'erreur récent : si Sphinx « crame » (timeouts en rafale parce
+        # qu'on va trop vite), il grimpe et le dashboard alerte.
+        window = last_outcomes[-10:]
+        recent_err_rate = round(
+            100 * sum(1 for o in window if o == "err") / len(window)
+        ) if window else 0
+        cur_total = control.total
         elapsed = time.time() - started
         rate = done / elapsed if elapsed > 0 else 0
-        eta = (total - done) / rate if rate > 0 else None
+        eta = (cur_total - done) / rate if rate > 0 else None
         _write_progress({
-            "status": status,                 # "running" | "done"
-            "total": total,
+            "status": status,                 # "running" | "done" | "stopped"
+            "total": cur_total,
             "done": done,
             "success": success,
             "errors": errors,
-            "percent": round(100 * done / total, 1) if total else 0,
+            "percent": round(100 * done / cur_total, 1) if cur_total else 0,
             "elapsed_sec": round(elapsed),
             "eta_sec": round(eta) if eta is not None else None,
+            "headless": control.headless,
+            "speed": round(control.speed, 2),
+            "recent_error_rate": recent_err_rate,
             "url": cfg["url"],
             "config": os.path.basename(config_path),
             "updated_at": datetime.now().strftime("%H:%M:%S"),
@@ -405,34 +442,57 @@ def run(config_path, total, headless=True):
 
     print(f"Config : {config_path}")
     print(f"URL    : {cfg['url']}")
-    print(f"Cible  : {total} réponses, headless={'oui' if headless else 'non'}")
+    print(f"Cible  : {control.total} réponses, headless={'oui' if control.headless else 'non'}")
     print(f"Suivi  : ouvre dashboard.html dans un navigateur.")
     print("-" * 60, flush=True)
     push_progress("running", "Démarrage…")
 
-    for i in range(1, total + 1):
+    i = 0
+    while True:
+        # Arrêt demandé depuis le dashboard ?
+        if control.stop:
+            done = success + errors
+            push_progress("stopped", f"Arrêté : {success} OK / {errors} erreurs ({done} faites)")
+            print(f"\nArrêté à la demande — {success} réponses envoyées, {errors} erreurs.", flush=True)
+            return success, errors
+        # Cible atteinte ? (relue à chaque tour, donc ajustable en cours de run)
+        if i >= control.total:
+            break
+
+        i += 1
+        cur_total = control.total
+        # Synchronise le facteur de vitesse global (réglable en direct).
+        global _SPEED
+        _SPEED = max(0.1, control.speed)
         profile = generate_profile(cfg)
         summary = " ".join(
             f"{k}={v}" for k, v in list(profile.items())[:6]
         )
-        print(f"[{i}/{total}] {summary} ...", flush=True)
+        print(f"[{i}/{cur_total}] {summary} ...", flush=True)
 
         try:
-            fill_survey(cfg, profile, headless=headless)
+            fill_survey(cfg, profile, headless=control.headless)
             success += 1
-            line = f"[{i}/{total}] OK"
+            last_outcomes.append("ok")
+            line = f"[{i}/{cur_total}] OK"
             print(f"{line}  (total: {success} OK / {errors} err)", flush=True)
         except PlaywrightTimeout as e:
             errors += 1
-            line = f"[{i}/{total}] TIMEOUT"
+            last_outcomes.append("err")
+            line = f"[{i}/{cur_total}] TIMEOUT"
             print(f"{line} : {e}", flush=True)
         except Exception as e:
             errors += 1
-            line = f"[{i}/{total}] ERREUR"
+            last_outcomes.append("err")
+            line = f"[{i}/{cur_total}] ERREUR"
             print(f"{line} : {e}", flush=True)
         finally:
             push_progress("running", line)
-            time.sleep(random.uniform(2.0, 5.0))
+            # Pause entre deux réponses, divisée par le facteur de vitesse.
+            # Plancher de sécurité : on ne descend jamais sous 0.4 s pour ne pas
+            # marteler le serveur Sphinx (voir avertissement turbo côté dashboard).
+            pause = random.uniform(2.0, 5.0) / max(0.1, control.speed)
+            time.sleep(max(0.4, pause))
 
     push_progress("done", f"Terminé : {success} OK / {errors} erreurs")
     print(f"\nTerminé — {success} réponses envoyées, {errors} erreurs.", flush=True)
